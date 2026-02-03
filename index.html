@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Advanced Manifold Surveillance System</title>
+    <style>
+        :root {
+            --ui-color: #00ff41;
+            --bg-dark: #050a05;
+        }
+
+        body, html {
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            background-color: var(--bg-dark);
+            color: var(--ui-color);
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+        }
+
+        #viewport {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            cursor: crosshair;
+        }
+
+        #map-layer {
+            position: absolute;
+            top: -10%; left: -10%;
+            width: 120%; height: 120%;
+            background-image: url('map1.jpg'); 
+            background-size: cover;
+            background-position: center;
+            filter: grayscale(50%) contrast(140%) brightness(0.4);
+            transition: transform 0.2s ease-out, background-image 0.5s ease;
+        }
+
+        #manifold-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            pointer-events: none;
+            mix-blend-mode: screen;
+        }
+
+        #hud {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            box-sizing: border-box;
+        }
+
+        .overlay-info {
+            position: absolute;
+            top: 40px; left: 40px;
+            padding: 15px;
+            background: rgba(0,0,0,0.7);
+            border-left: 3px solid var(--ui-color);
+            font-size: 12px;
+            transition: border-color 0.3s;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 40px;
+            right: 40px;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        button {
+            background: rgba(0,0,0,0.6);
+            border: 1px solid var(--ui-color);
+            color: var(--ui-color);
+            padding: 8px 15px;
+            cursor: pointer;
+            text-transform: uppercase;
+            font-family: 'Courier New', monospace;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: var(--ui-color);
+            color: black;
+        }
+
+        #scanline {
+            position: absolute;
+            width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="viewport">
+    <div id="map-layer"></div>
+    <canvas id="manifold-canvas"></canvas>
+    <div id="scanline"></div>
+    
+    <div id="hud">
+        <div class="overlay-info" id="info-box">
+            OBJECTIVE: DYNAMIC TOPOLOGY<br>
+            COORDS: <span id="coords">0.000, 0.000</span><br>
+            PULSE: <span id="pulse-val">1.0x</span><br>
+            MODE: <span id="mode-text">ANALYZING</span>
+        </div>
+
+        <div class="controls">
+            <button onclick="switchMap('map1.jpg')">Sector A</button>
+            <button onclick="switchMap('map2.jpg')">Sector B</button>
+            <button onclick="switchMap('map3.jpg')">Sector C</button>
+            <button onclick="randomizeColor()">Random Color</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('manifold-canvas');
+    const ctx = canvas.getContext('2d');
+    const mapLayer = document.getElementById('map-layer');
+    const coordDisplay = document.getElementById('coords');
+    const pulseDisplay = document.getElementById('pulse-val');
+    const infoBox = document.getElementById('info-box');
+
+    let width, height;
+    let mouseX = 0, mouseY = 0;
+    let targetX = 0, targetY = 0;
+    
+    // 初始颜色
+    let currentStrokeColor = 'rgba(0, 255, 65, 0.4)';
+    let uiColor = '#00ff41';
+
+    function resize() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    window.addEventListener('mousemove', (e) => {
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+        coordDisplay.innerText = `${(mouseX/100).toFixed(3)}, ${(mouseY/100).toFixed(3)}`;
+    });
+
+    function switchMap(fileName) {
+        mapLayer.style.backgroundImage = `url('${fileName}')`;
+    }
+
+    // 功能 1：随机切换网格颜色
+    function randomizeColor() {
+        const r = Math.floor(Math.random() * 155 + 100); // 保持较高亮度
+        const g = Math.floor(Math.random() * 155 + 100);
+        const b = Math.floor(Math.random() * 155 + 100);
+        
+        uiColor = `rgb(${r}, ${g}, ${b})`;
+        currentStrokeColor = `rgba(${r}, ${g}, ${b}, 0.4)`;
+        
+        // 同步更新 UI 文字颜色
+        document.documentElement.style.setProperty('--ui-color', uiColor);
+        infoBox.style.borderColor = uiColor;
+    }
+
+    function transformZ(x, y, cx, cy, dynamicScale) {
+        let relX = x - cx;
+        let relY = y - cy;
+        let m2 = relX * relX + relY * relY;
+        
+        const limit = 500;
+        if (m2 < limit) m2 = limit;
+
+        // 应用传入的动态缩放系数
+        let re = (relX / m2) * dynamicScale;
+        let im = (-relY / m2) * dynamicScale;
+
+        return { x: x + re, y: y + im };
+    }
+
+    function draw(time) {
+        ctx.clearRect(0, 0, width, height);
+        
+        targetX += (mouseX - targetX) * 0.08;
+        targetY += (mouseY - targetY) * 0.08;
+
+        // 背景随动
+        mapLayer.style.transform = `translate(${(targetX - width/2) * -0.02}px, ${(targetY - height/2) * -0.02}px) scale(1.1)`;
+
+        // 功能 2：自动缩放（呼吸脉冲效果）
+        // 使用正弦函数让 scale 在 50000 到 110000 之间波动
+        const pulse = Math.sin(time * 0.0015);
+        const dynamicScale = 80000 + pulse * 30000;
+        
+        // 更新 UI 上的脉冲数值显示
+        pulseDisplay.innerText = (1 + pulse * 0.3).toFixed(2) + "x";
+
+        ctx.strokeStyle = currentStrokeColor;
+        ctx.lineWidth = 1;
+
+        const step = 40;
+
+        // 绘制网格
+        for (let j = 0; j < height + step; j += step) {
+            ctx.beginPath();
+            for (let i = 0; i < width + 20; i += 20) {
+                const p = transformZ(i, j, targetX, targetY, dynamicScale);
+                if (i === 0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+        }
+
+        for (let i = 0; i < width + step; i += step) {
+            ctx.beginPath();
+            for (let j = 0; j < height + 20; j += 20) {
+                const p = transformZ(i, j, targetX, targetY, dynamicScale);
+                if (j === 0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+        }
+
+        requestAnimationFrame(draw);
+    }
+
+    draw(0);
+</script>
+
+</body>
+</html>
